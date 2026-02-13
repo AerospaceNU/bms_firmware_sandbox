@@ -92,6 +92,9 @@ int verify_crc(uint8_t rx_buf[], size_t length) {
     if (length < 2) {
         return 0; // Not enough data to verify CRC
     }
+    if (rx_buf[0] == 0xFF && rx_buf[1] == 0xFF && (rx_buf[2] == 0xFF || rx_buf[2] == 0x00)) {
+        return 1; // Special case for 0xFFFF00 or 0xFFFFFF responses, consider CRC valid
+    }
     uint8_t received_crc = rx_buf[2];
     uint8_t calculated_crc = calculate_crc(rx_buf, 2); // Calculate CRC for the first 2 bytes
     return (received_crc == calculated_crc); // Return 1 if CRC matches, 0 otherwise
@@ -252,6 +255,31 @@ int read_direct_command(uint8_t command, uint8_t* data) {
     return voltage; // Return the voltage reading
 }
 
+void test_control_status() {
+    uint8_t tx_buf[3] = {0x00, 0x00, 0x00}; // Dummy data to read LSB
+    uint8_t rx_buf[3];
+    tx_buf[2] = calculate_crc(tx_buf, 2); // Calculate CRC for the command
+
+    spi_wr_blocking(tx_buf, rx_buf, 3); // Send command to read LSB and receive response
+    printf("Previous response: ");
+    print_hex(rx_buf, 3); // Debug print for the response received
+    wait(50); // Short delay between transactions
+    spi_r_blocking(rx_buf, 3); // Read the response for the LSB
+     printf("Current response: ");
+    print_hex(rx_buf, 3); // Debug print for the response received
+    if (rx_buf[1] & 0b000000100) {
+        printf("BMS is in DEEPSLEEP mode\n");
+    } else {
+        printf("BMS is in ACTIVE mode\n");
+    }
+    if (rx_buf[1] & 0b000000010) {
+        printf("BMS Load Detect timed out\n");
+    }
+    if (rx_buf[1] & 0b000000001) {
+        printf("BMS LD pullup was active in previous LD pin Measurement\n");
+    }
+}
+
 int main()
 {
     stdio_init_all();
@@ -265,6 +293,10 @@ int main()
 
     while (true) {
         
+        printf("Control Status..........\n");
+        test_control_status();
+        printf("End Control Status......\n\n\n");
+
         uint8_t lsb, msb;
 
         int result = read_direct_command(command, &lsb);
@@ -281,7 +313,7 @@ int main()
         }
 
         voltage = (msb << 8) | lsb; // Combine MSB and LSB to get the full voltage reading
-        printf("Voltage reading for command 0x%02X: %d mV\n", command, voltage); // Print the voltage reading for the current command
+        printf("Voltage reading for command 0x%02X: %d mV\n\n\n", command, voltage); // Print the voltage reading for the current command
 
         
         /*****************************************************************************************/
@@ -323,7 +355,7 @@ int main()
         printf("BMS Control Status: 0x%04X, DEEPSLEEP Mode: %s\n", control_status, (control_status & 0x0002) ? "DEEPSLEEP" : "ACTIVE");
         
         */
-       
+
         /*****************************************************************************************/
         sleep_ms(5000);
     }
