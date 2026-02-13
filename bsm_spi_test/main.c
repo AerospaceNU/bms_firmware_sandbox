@@ -15,8 +15,7 @@
 #define SPI_CPOL 0
 #define SPI_CPHA 0
 #define SPI_ORDER 1 // MSB first
-#define SPI_CS_DELAY 50
-#define SPI_TRANSACTION_DELAY 100
+#define SPI_TRANSACTION_DELAY_US 50
 #define SPI_MAX_RETRIES 3
 
 // Errors
@@ -105,7 +104,6 @@ int verify_crc(uint8_t rx_buf[], size_t length) {
 /// @return 1 if CRC matches, 0 otherwise
 int spi_wr_blocking(uint8_t tx_buf[], uint8_t rx_buf[], size_t length) {
     gpio_put(PIN_CS, 0); // Assert CS to start the transaction
-    sleep_ms(SPI_CS_DELAY); // Short delay to ensure CS is recognized by the slave device
     spi_write_read_blocking(SPI_PORT, tx_buf, rx_buf, length); // Send data and read response
     gpio_put(PIN_CS, 1); // Deassert CS to end the transaction
     if (DEBUG) {
@@ -139,7 +137,6 @@ int is_outgoing_buffer_not_updated(uint8_t read_buf[]) {
 /// @param length The number of bytes to be transferred
 void spi_w_blocking(uint8_t tx_buf[], size_t length) {
     gpio_put(PIN_CS, 0); // Assert CS to start the transaction
-    sleep_ms(SPI_CS_DELAY); // Short delay to ensure CS is recognized by the slave device
     spi_write_blocking(SPI_PORT, tx_buf, length); // Send data
     gpio_put(PIN_CS, 1); // Deassert CS to end the transaction
 }
@@ -150,7 +147,6 @@ void spi_w_blocking(uint8_t tx_buf[], size_t length) {
 /// @return 1 if CRC matches, 0 otherwise
 int spi_r_blocking(uint8_t rx_buf[], size_t length) {
     gpio_put(PIN_CS, 0); // Assert CS to start the transaction
-    sleep_ms(SPI_CS_DELAY); // Short delay to ensure CS is recognized by the slave device
     spi_read_blocking(SPI_PORT, 0x00, rx_buf, length); // Read data
     gpio_put(PIN_CS, 1); // Deassert CS to end the transaction
     if (DEBUG) {
@@ -181,7 +177,7 @@ int read_direct_command(uint8_t command, uint8_t* data) {
     tx_buf[2] = calculate_crc(tx_buf, 2); // Calculate CRC for the command
     while (tries < SPI_MAX_RETRIES) {
         spi_w_blocking(tx_buf, 3); // Send command without reading response (since we will read it in the next step)
-        sleep_us(SPI_TRANSACTION_DELAY); // Short delay between transmissions
+        sleep_us(SPI_TRANSACTION_DELAY_US); // Short delay between transmissions
         int crc = spi_r_blocking(rx_buf, 3); // Read the response for the command
         
         // Checks
@@ -239,14 +235,14 @@ int read_direct_command(uint8_t command, uint8_t* data) {
     // spi_wr_blocking(lsb_tx_buf, rx_buf, 3); // Send command to read LSB and receive response
     spi_w_blocking(lsb_tx_buf, 3); // Send command to read LSB without reading response (since we will read it in the next step)
     print_hex(lsb_tx_buf, 3); // Debug print for LSB command being sent
-    sleep_us(SPI_TRANSACTION_DELAY); // Short delay between transmissions
+    sleep_us(SPI_TRANSACTION_DELAY_US); // Short delay between transmissions
     spi_r_blocking(rx_buf, 3); // Read the response for the LSB
     uint8_t lsb = rx_buf[1]; // Save the 2nd byte as LSB
     // 3. Read the next byte and save it as the MSB of the voltage reading
     // spi_wr_blocking(msb_tx_buf, rx_buf, 3); // Send command to read MSB and receive response
     spi_w_blocking(msb_tx_buf, 3); // Send command to read MSB without reading response (since we will read it in the next step)
     print_hex(msb_tx_buf, 3); // Debug print for MSB command being sent
-    sleep_us(SPI_TRANSACTION_DELAY); // Short delay between transmissions
+    sleep_us(SPI_TRANSACTION_DELAY_US); // Short delay between transmissions
     spi_r_blocking(rx_buf, 3); // Read the response for the MSB
     uint8_t msb = rx_buf[1]; // Save the 2nd byte as MSB
     // 4. Combine the MSB and LSB to get the full voltage reading
@@ -277,7 +273,7 @@ int main()
         } else {
             printf("Failed to read LSB, error code: %d\n", result);
         }
-        int result = read_direct_command(command + 1, &msb);
+        result = read_direct_command(command + 1, &msb);
         if (result == 1) {
             printf("Successfully read MSB: 0x%02X\n", msb);
         } else {
@@ -300,6 +296,7 @@ int main()
         // }
         // printf("\n\n\n"); // Print a newline after reading all cells
 
+        /*
         uint8_t rx_buf[3]; // Buffer to store received data
         uint8_t tx_buf[3] = {0x00, 0x00, 0x00}; // Dummy data to read LSB
         tx_buf[0] = 0x00;
@@ -307,24 +304,26 @@ int main()
         spi_w_blocking(tx_buf, 3);
         printf("tx_buf after sending LSB command: ");
         print_hex(tx_buf, 3); // Debug print for command being sent
-        sleep_us(SPI_TRANSACTION_DELAY); // Short delay between transmissions
+        sleep_us(SPI_TRANSACTION_DELAY_US); // Short delay between transmissions
         spi_r_blocking(rx_buf, 3); // Read the response for the LSB
-        uint8_t lsb = rx_buf[1]; // Save the 2nd byte as LSB
+        lsb = rx_buf[1]; // Save the 2nd byte as LSB
         print_hex(rx_buf, 3); // Debug print for the response received
         tx_buf[0] = 0x01;
         tx_buf[2] = calculate_crc(tx_buf, 2); // Calculate CRC for the command
         spi_w_blocking(tx_buf, 3);
         printf("tx_buf after sending MSB command: ");
         print_hex(tx_buf, 3); // Debug print for command being sent
-        sleep_us(SPI_TRANSACTION_DELAY); // Short delay between transmissions
+        sleep_us(SPI_TRANSACTION_DELAY_US); // Short delay between transmissions
         spi_r_blocking(rx_buf, 3); // Read the response for the MSB
-        uint8_t msb = rx_buf[1]; // Save the 2nd byte as MSB
+        msb = rx_buf[1]; // Save the 2nd byte as MSB
         print_hex(rx_buf, 3); // Debug print for the response received
 
         uint16_t control_status = (msb << 8) | lsb; // Combine MSB and LSB to get the full voltage reading
         // Print the second bit of the control status to check if the BMS is in DEEPSLEEP mode (1 = DEEPSLEEP, 0 = ACTIVE)
         printf("BMS Control Status: 0x%04X, DEEPSLEEP Mode: %s\n", control_status, (control_status & 0x0002) ? "DEEPSLEEP" : "ACTIVE");
-
+        
+        */
+       
         /*****************************************************************************************/
         sleep_ms(5000);
     }
