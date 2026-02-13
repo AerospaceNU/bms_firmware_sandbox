@@ -263,7 +263,7 @@ void test_control_status() {
     spi_wr_blocking(tx_buf, rx_buf, 3); // Send command to read LSB and receive response
     printf("Previous response: ");
     print_hex(rx_buf, 3); // Debug print for the response received
-    wait(50); // Short delay between transactions
+    sleep_ms(100); // Short delay between transactions
     spi_r_blocking(rx_buf, 3); // Read the response for the LSB
      printf("Current response: ");
     print_hex(rx_buf, 3); // Debug print for the response received
@@ -284,7 +284,6 @@ int main()
 {
     stdio_init_all();
     spi_controller_init();
-    sleep_ms(8000); // Sleep for a bit to allow time to connect a logic analyser or oscilloscope
 
     /*********************************************************************************************/
 
