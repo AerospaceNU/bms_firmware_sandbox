@@ -179,10 +179,9 @@ int read_direct_command(uint8_t command, uint8_t* data) {
     uint8_t rx_buf[3]; // Buffer to store received data
     tx_buf[0] = command; // Set the command byte to the command address
     tx_buf[2] = calculate_crc(tx_buf, 2); // Calculate CRC for the command
-    spi_w_blocking(tx_buf, 3); // Send command without reading response (since we will read it in the next step)
-    free(tx_buf); // Free the dynamically allocated tx_buf
-    sleep_us(SPI_TRANSACTION_DELAY); // Short delay between transmissions
     while (tries < SPI_MAX_RETRIES) {
+        spi_w_blocking(tx_buf, 3); // Send command without reading response (since we will read it in the next step)
+        sleep_us(SPI_TRANSACTION_DELAY); // Short delay between transmissions
         int crc = spi_r_blocking(rx_buf, 3); // Read the response for the command
         
         // Checks
