@@ -35,7 +35,10 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(bsm_spi_test main.c )
+add_executable(bsm_spi_test 
+    main.c
+    bq76972.c
+)
 
 pico_set_program_name(bsm_spi_test "bsm_spi_test")
 pico_set_program_version(bsm_spi_test "0.1")
