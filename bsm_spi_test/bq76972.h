@@ -133,6 +133,32 @@ int bq76972_read_all_thermistor_values(int16_t *temperatures_dK,
                                        size_t num_temperatures);
 
 // ============================================================================
+// Current Reading Functions
+// CC2 Current (0x3A): signed 16-bit, units determined by USER_AMPS setting
+// in DA Configuration (0x9303).
+// ============================================================================
+
+// USER_AMPS setting in DA Configuration register
+typedef enum
+{
+    USER_AMPS_0_1_MA = 0, // 0.1 mA per count
+    USER_AMPS_1_MA = 1,   // 1 mA per count (default)
+    USER_AMPS_10_MA = 2,  // 10 mA per count
+    USER_AMPS_100_MA = 3, // 100 mA per count
+} user_amps_t;
+
+int bq76972_configure_user_amps(user_amps_t setting);
+int bq76972_read_user_amps(user_amps_t *setting);
+
+// Reads the raw CC2 current value. Units depend on the USER_AMPS setting.
+int bq76972_read_current_raw(int16_t *raw);
+
+// Reads CC2 current and converts to milliamps using the current USER_AMPS
+// setting. Call bq76972_configure_user_amps() first, or the default (1 mA)
+// is assumed.
+int bq76972_read_current_mA(float *current_mA);
+
+// ============================================================================
 // Configuration Verification
 // ============================================================================
 int bq76972_verify_thermistor_config(void);
