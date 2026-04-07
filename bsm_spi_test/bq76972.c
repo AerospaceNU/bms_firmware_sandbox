@@ -402,27 +402,75 @@ int bq76972_read_data_memory(uint16_t addr, uint8_t *data, size_t len)
         return result;
     }
 
-    sleep_us(DATA_MEMORY_RESPONSE_DELAY_US);
-
-    // Poll 0x3E until the device echoes back the address we wrote,
-    // indicating the subcommand has completed. 0xFF means still processing.
-    for (int poll = 0; poll < 20; poll++)
+    // Poll until the response buffer is fully populated:
+    //   - 0x3E echoes back the lower address byte
+    //   - 0x61 (response length) is non-zero
+    bool ready = false;
+    for (int attempt = 0; attempt < 3 && !ready; attempt++)
     {
-        uint8_t subcmd_lo = 0xFF;
-        result = bq76972_read_direct(SUBCOMMAND_LOWER, &subcmd_lo);
-        if (result == SUCCESS && subcmd_lo == (uint8_t)(addr & 0xFFU))
+        if (attempt > 0)
         {
-            break;
+            bq76972_wakeup();
+            result = bq76972_write_direct_pair(SUBCOMMAND_LOWER,
+                                               (uint8_t)(addr & 0xFFU),
+                                               SUBCOMMAND_UPPER,
+                                               (uint8_t)((addr >> 8) & 0xFFU));
+            if (result != SUCCESS)
+            {
+                return result;
+            }
         }
-        sleep_ms(1);
+
+        for (int poll = 0; poll < 50; poll++)
+        {
+            uint8_t subcmd_lo = 0xFF;
+            uint8_t resp_len = 0;
+
+            result = bq76972_read_direct(SUBCOMMAND_LOWER, &subcmd_lo);
+            if (result == SUCCESS)
+            {
+                result = bq76972_read_direct(RESPONSE_BUFFER_LENGTH, &resp_len);
+            }
+
+            if (result == SUCCESS &&
+                subcmd_lo == (uint8_t)(addr & 0xFFU) && resp_len > 0)
+            {
+                ready = true;
+                break;
+            }
+            sleep_ms(2);
+        }
     }
 
-    // Diagnostic: read the first 4 bytes of the response buffer plus
-    // checksum and length, so we can see exactly what the device returned.
-    uint8_t raw_buf[4] = {0};
-    for (size_t i = 0; i < 4 && i < (len + 2); i++)
+    if (!ready)
     {
-        result = bq76972_read_direct((uint8_t)(RESPONSE_BUFFER_START + i), &raw_buf[i]);
+        printf("[DM_READ 0x%04X] Response buffer never ready\n", addr);
+        return SPI_READ_TOO_FAST_ERR;
+    }
+
+    // Read length to determine how many buffer bytes the device populated.
+    // Length = subcmd(2) + chk/len(2) + buffer_data_bytes.
+    uint8_t reported_length = 0;
+    result = bq76972_read_direct(RESPONSE_BUFFER_LENGTH, &reported_length);
+    if (result != SUCCESS)
+    {
+        return result;
+    }
+
+    size_t buf_data_len = (reported_length > 4) ? (reported_length - 4) : 0;
+    if (buf_data_len == 0 || buf_data_len > DATA_MEMORY_MAX_BYTES)
+    {
+        printf("[DM_READ 0x%04X] Invalid response length: %d\n",
+               addr, reported_length);
+        return SPI_UNEXPECTED_RESPONSE_ERR;
+    }
+
+    // Read the full data block from the transfer buffer (0x40..0x5F).
+    uint8_t block[DATA_MEMORY_MAX_BYTES] = {0};
+    for (size_t i = 0; i < buf_data_len; i++)
+    {
+        result = bq76972_read_direct(
+            (uint8_t)(RESPONSE_BUFFER_START + i), &block[i]);
         if (result != SUCCESS)
         {
             printf("[DM_READ 0x%04X] Failed reading 0x%02X (err=%d)\n",
@@ -431,67 +479,43 @@ int bq76972_read_data_memory(uint16_t addr, uint8_t *data, size_t len)
         }
     }
 
+    // Read the reported checksum.
     uint8_t reported_checksum = 0;
-    uint8_t reported_length = 0;
-
     result = bq76972_read_direct(RESPONSE_BUFFER_CHKSUM, &reported_checksum);
     if (result != SUCCESS)
     {
-        printf("[DM_READ 0x%04X] Failed reading checksum (err=%d)\n", addr, result);
         return result;
     }
 
-    result = bq76972_read_direct(RESPONSE_BUFFER_LENGTH, &reported_length);
-    if (result != SUCCESS)
-    {
-        printf("[DM_READ 0x%04X] Failed reading length (err=%d)\n", addr, result);
-        return result;
-    }
+    // Verify checksum: ~(0x3E_lo + 0x3F_hi + all buffer data bytes).
+    // The checksum covers the subcommand address bytes + full buffer block.
+    uint8_t computed_checksum = calculate_dm_checksum(addr, block, buf_data_len);
 
-    printf("[DM_READ 0x%04X] buf=[0x%02X 0x%02X 0x%02X 0x%02X] chk=0x%02X len=%d\n",
-           addr, raw_buf[0], raw_buf[1], raw_buf[2], raw_buf[3],
-           reported_checksum, reported_length);
+    printf("[DM_READ 0x%04X] block_len=%zu chk: reported=0x%02X computed=0x%02X\n",
+           addr, buf_data_len, reported_checksum, computed_checksum);
 
-    // Try interpretation A: data starts at 0x40 (no address echo)
-    uint8_t chk_a = calculate_dm_checksum(addr, &raw_buf[0], len);
-    // Try interpretation B: data starts at 0x42 (address echo at 0x40-0x41)
-    uint8_t chk_b = calculate_dm_checksum(addr, &raw_buf[2], len);
-    printf("[DM_READ 0x%04X] expected_chk(0x40)=0x%02X expected_chk(0x42)=0x%02X\n",
-           addr, chk_a, chk_b);
-
-    // Use whichever interpretation matches
-    if (reported_checksum == chk_a && reported_length >= (uint8_t)(len + 4U))
+    if (reported_checksum != computed_checksum)
     {
-        // Data starts at 0x40
-        for (size_t i = 0; i < len; i++)
-        {
-            data[i] = raw_buf[i];
-        }
-        printf("[DM_READ 0x%04X] Matched at offset 0 -> data=0x%02X\n",
-               addr, data[0]);
-        return SUCCESS;
-    }
-    else if (reported_checksum == chk_b && reported_length >= (uint8_t)(len + 4U))
-    {
-        // Data starts at 0x42
-        for (size_t i = 0; i < len; i++)
-        {
-            data[i] = raw_buf[2 + i];
-        }
-        printf("[DM_READ 0x%04X] Matched at offset 2 -> data=0x%02X\n",
-               addr, data[0]);
-        return SUCCESS;
-    }
-    else
-    {
-        printf("[DM_READ 0x%04X] NO MATCH - neither offset works\n", addr);
-        // Fall back to offset 0 for the data, but report CRC error
-        for (size_t i = 0; i < len; i++)
-        {
-            data[i] = raw_buf[i];
-        }
+        printf("[DM_READ 0x%04X] Checksum mismatch\n", addr);
         return SPI_CRC_MISMATCH_ERR;
     }
+
+    // The device always returns a full 32-byte block aligned to the base
+    // address written to 0x3E/0x3F. For data memory, the requested byte(s)
+    // start at offset 0 within the block (the address we wrote is the base).
+    if (len > buf_data_len)
+    {
+        printf("[DM_READ 0x%04X] Requested %zu bytes but block has %zu\n",
+               addr, len, buf_data_len);
+        return SPI_UNEXPECTED_RESPONSE_ERR;
+    }
+
+    for (size_t i = 0; i < len; i++)
+    {
+        data[i] = block[i];
+    }
+
+    return SUCCESS;
 }
 
 int bq76972_read_data_memory_u8(uint16_t addr, uint8_t *value)
@@ -824,7 +848,7 @@ int bq76972_read_current_raw(int16_t *raw)
     return result;
 }
 
-int bq76972_read_current_mA(float *current_mA)
+int bq76972_read_current_mA(int32_t *current_mA)
 {
     if (current_mA == NULL)
     {
@@ -839,7 +863,7 @@ int bq76972_read_current_mA(float *current_mA)
     }
 
     static const float scale[] = {0.1f, 1.0f, 10.0f, 100.0f};
-    *current_mA = (float)raw * scale[cached_user_amps & 0x03];
+    *current_mA = (int32_t)((float)raw * scale[cached_user_amps & 0x03]);
     return SUCCESS;
 }
 

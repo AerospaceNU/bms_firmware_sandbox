@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdio.h>
 
 #include "bq76972.h"
@@ -11,8 +12,8 @@ int main(void)
 
     sleep_ms(5000);
 
-    // Set current resolution to 0.1 mA per count
-    int cfg_result = bq76972_configure_user_amps(USER_AMPS_0_1_MA);
+    // Set current resolution to 10 mA per count
+    int cfg_result = bq76972_configure_user_amps(USER_AMPS_10_MA);
     if (cfg_result != SUCCESS)
     {
         printf("USER_AMPS config failed (err=%d), using default\n", cfg_result);
@@ -43,11 +44,12 @@ int main(void)
         printf("=== Battery Monitor Reading ===\n\n");
 
         // Read current via CC2 (0x3A), scaled by USER_AMPS setting
-        float current_mA = 0.0f;
+        int32_t current_mA = 0;
         int result = bq76972_read_current_mA(&current_mA);
         if (result == SUCCESS)
         {
-            printf("Current: %.1f mA\n", current_mA);
+            float current_A = (float)current_mA / 1000.0f;
+            printf("Current: %.3f A\n", current_A);
         }
         else
         {
@@ -80,7 +82,7 @@ int main(void)
         // }
 
         printf("\n");
-        sleep_ms(500);
+        sleep_ms(250);
     }
 
     return 0;

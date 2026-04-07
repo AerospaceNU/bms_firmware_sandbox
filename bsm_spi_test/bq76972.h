@@ -156,7 +156,7 @@ int bq76972_read_current_raw(int16_t *raw);
 // Reads CC2 current and converts to milliamps using the current USER_AMPS
 // setting. Call bq76972_configure_user_amps() first, or the default (1 mA)
 // is assumed.
-int bq76972_read_current_mA(float *current_mA);
+int bq76972_read_current_mA(int32_t *current_mA);
 
 // ============================================================================
 // Configuration Verification
