@@ -40,6 +40,7 @@
 #define DFETOFF_CONFIG_ADDR 0x92FB
 #define TS1_CONFIG_ADDR 0x92FD
 #define TS2_CONFIG_ADDR 0x92FE
+#define DA_CONFIG_ADDR 0x9303
 #define TS3_CONFIG_ADDR 0x92FF
 #define DCHG_CONFIG_ADDR 0x9301
 #define DDSG_CONFIG_ADDR 0x9302
@@ -62,6 +63,9 @@
 #define THERMISTOR_MF_DEFAULT_CONFIG THERMISTOR_CONFIG_MULTIFUNCTION_PIN
 
 #define DEBUG 0
+
+// Cached USER_AMPS setting — updated by bq76972_configure_user_amps()
+static user_amps_t cached_user_amps = USER_AMPS_1_MA;
 
 // ============================================================================
 // Private Helper Functions
@@ -765,6 +769,78 @@ int bq76972_verify_thermistor_config(void)
     }
 
     return ok ? SUCCESS : SPI_UNEXPECTED_RESPONSE_ERR;
+}
+
+int bq76972_configure_user_amps(user_amps_t setting)
+{
+    uint8_t da_config = 0;
+    int result = bq76972_read_data_memory_u8(DA_CONFIG_ADDR, &da_config);
+    if (result != SUCCESS)
+    {
+        return result;
+    }
+
+    // USER_AMPS occupies bits [1:0]
+    da_config = (uint8_t)((da_config & 0xFC) | ((uint8_t)setting & 0x03));
+
+    result = bq76972_write_data_memory_u8(DA_CONFIG_ADDR, da_config, true);
+    if (result == SUCCESS)
+    {
+        cached_user_amps = setting;
+    }
+    return result;
+}
+
+int bq76972_read_user_amps(user_amps_t *setting)
+{
+    if (setting == NULL)
+    {
+        return SPI_UNKNOWN_ERR;
+    }
+
+    uint8_t da_config = 0;
+    int result = bq76972_read_data_memory_u8(DA_CONFIG_ADDR, &da_config);
+    if (result == SUCCESS)
+    {
+        *setting = (user_amps_t)(da_config & 0x03);
+        cached_user_amps = *setting;
+    }
+    return result;
+}
+
+int bq76972_read_current_raw(int16_t *raw)
+{
+    if (raw == NULL)
+    {
+        return SPI_UNKNOWN_ERR;
+    }
+
+    uint16_t val = 0;
+    int result = bq76972_read_u16(0x3A, &val);
+    if (result == SUCCESS)
+    {
+        *raw = (int16_t)val;
+    }
+    return result;
+}
+
+int bq76972_read_current_mA(float *current_mA)
+{
+    if (current_mA == NULL)
+    {
+        return SPI_UNKNOWN_ERR;
+    }
+
+    int16_t raw = 0;
+    int result = bq76972_read_current_raw(&raw);
+    if (result != SUCCESS)
+    {
+        return result;
+    }
+
+    static const float scale[] = {0.1f, 1.0f, 10.0f, 100.0f};
+    *current_mA = (float)raw * scale[cached_user_amps & 0x03];
+    return SUCCESS;
 }
 
 int bq76972_read_all_thermistor_values(int16_t *temperatures_dK,
